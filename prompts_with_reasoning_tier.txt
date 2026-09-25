@@ -1,0 +1,41 @@
+# LLM Energy Benchmark – Prompt Set
+# Lines starting with # are ignored.
+# Deliberately diverse: short/factual, medium/reasoning, long/generative.
+
+# ── Tier 1: Short factual ────────────────────────────────────────────────────
+What is the capital of France?
+What year was the C programming language created?
+Name three planets in our solar system.
+What is 17 multiplied by 23?
+Who wrote the novel "1984"?
+
+# ── Tier 2: Medium reasoning ─────────────────────────────────────────────────
+Explain the difference between TCP and UDP in two sentences.
+What are the main advantages of using containers over virtual machines?
+Describe how HTTPS protects data in transit.
+What is gradient descent and why is it used in machine learning?
+Summarise the causes of World War I in three bullet points.
+
+# ── Tier 3: Long generation ───────────────────────────────────────────────────
+Write a Python function that checks whether a given string is a palindrome. Include docstring and tests.
+Explain how a transformer neural network works. Cover attention mechanisms, tokenisation, and training.
+Write a short story (about 200 words) about a robot who discovers music for the first time.
+List and briefly explain ten common software design patterns with a one-line example each.
+Describe the pros and cons of renewable energy sources: solar, wind, hydroelectric, and geothermal.
+
+# ── Tier 4: Reasoning-intensive (scored, see reasoning_prompts.csv) ──────────
+A train travels 60 km in the first hour and 90 km in the second hour. What is its average speed in km/h over the two hours? Give only the final number.
+A shop had 120 apples. It sold 45% of them in the morning and 30 more in the afternoon. How many apples are left? Give only the final number.
+Sarah has 3 times as many marbles as Tom. Together they have 48 marbles. How many marbles does Tom have? Give only the final number.
+A rectangular garden is 12 meters long and 8 meters wide. A path 1 meter wide runs around the inside edge of the garden. What is the area in square meters of the garden excluding the path? Give only the final number.
+If a recipe needs 250 grams of flour for 5 servings, how many grams are needed for 12 servings? Give only the final number.
+A tank is filled by pipe A in 6 hours and by pipe B in 3 hours. If both pipes run together, how many hours does it take to fill the tank? Give the answer rounded to one decimal place.
+There are 15 people at a party. Each person shakes hands exactly once with every other person. How many handshakes occur in total? Give only the final number.
+A car depreciates by 20% of its value each year. If it is worth 20000 now, what will it be worth after 2 years, rounded to the nearest whole number? Give only the final number.
+Two numbers have a sum of 42 and a difference of 8. What is the larger number? Give only the final number.
+A store increases the price of an item by 25% and then offers a 20% discount on the new price. If the original price was 80, what is the final price? Give only the final number.
+A cyclist rides at 18 km/h for 40 minutes. How many kilometers does she travel? Give only the final number.
+In a class of 30 students, 18 study French and 12 study Spanish, with 5 studying both. How many students study neither language? Give only the final number.
+A ladder 10 meters long leans against a wall with its foot 6 meters from the wall's base. How many meters up the wall does the ladder reach? Give only the final number.
+A jar contains red and blue marbles in a ratio of 3:5. If there are 24 red marbles, how many blue marbles are there? Give only the final number.
+A worker is paid 15 per hour for the first 8 hours and 22.5 per hour for each additional hour. How much is earned for a 10-hour day? Give only the final number.

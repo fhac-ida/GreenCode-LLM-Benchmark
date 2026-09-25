@@ -13,6 +13,21 @@ Usage
     python3 benchmark.py --runs 5 --idle-secs 20
     python3 benchmark.py --no-docker              # Ollama already running
 
+Reasoning-control extension
+----------------------------
+    python3 benchmark.py --models qwen3.5:2b gemma3:1b --reasoning-modes on off
+        For every model marked "reasoning_capable" in models_config.json,
+        the full prompt set is run once with extended thinking enabled
+        ("think": true) and once with it disabled ("think": false),
+        holding architecture, quantization and sampling settings fixed.
+        Non-reasoning-capable models are only ever run in "off" mode
+        (recorded as reasoning_mode="n/a") so they are not duplicated.
+
+    Requires models_config.json next to this script (see
+    models_config.json.example). Add a "reasoning_toggle_prompt_suffix"
+    per model instead of relying on the API "think" flag for models whose
+    Ollama build does not honour it (e.g. some older GGUF templates).
+
 Requirements (WSL2)
 -------------------
     pip install requests psutil matplotlib pandas numpy
@@ -44,6 +59,7 @@ OLLAMA_URL      = "http://localhost:11434"
 CONTAINER_NAME  = "llm-bench-ollama"
 OLLAMA_IMAGE    = "ollama/ollama"
 POLL_INTERVAL_S = 0.5   # nvidia-smi polling cadence
+MODELS_CONFIG_PATH = Path("models_config.json")
 Path("results").mkdir(exist_ok=True)
 Path("plots").mkdir(exist_ok=True)
 RESULTS_DIR     = Path("results/"+datetime.now().strftime("%Y%m%d_%H%M%S"))
@@ -51,6 +67,29 @@ PLOTS_DIR       = Path("plots/"+datetime.now().strftime("%Y%m%d_%H%M%S"))
 RESULTS_DIR.mkdir(exist_ok=True)
 PLOTS_DIR.mkdir(exist_ok=True)
 
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Reasoning-mode configuration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def load_models_config(path: Path = MODELS_CONFIG_PATH) -> dict:
+    """Loads the reasoning metadata for each model from models_config.json.
+
+    If the file is missing, all models are treated as not reasoning-capable
+    (reasoning_capable=False) - the benchmark will still run without it."""
+    if not path.exists():
+        print(f"  NOTE: {path} not found - all models will be treated as "
+              f"reasoning_capable=False (reasoning_mode='n/a').")
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def model_reasoning_meta(model: str, config: dict) -> dict:
+    """Returns the reasoning metadata for a model, using a safe default for models not listed in the config."""
+    return config.get(model, {"reasoning_capable": False, "reasoning_toggle": None})
 
 def collect_system_info() -> dict:
     """Collects hardware/OS metadata for reproducibility documentation."""
@@ -265,15 +304,19 @@ def ollama_pull(model: str) -> None:
     )
 
 
-def ollama_warmup(model: str) -> None:
-    """Send a tiny request to load model weights into GPU VRAM."""
-    print(f"  Warming up {model}...", end="", flush=True)
+def ollama_warmup(model: str, think: bool | None = None) -> None:
+    """Send a tiny request to load model weights into GPU VRAM.
+
+    Warmup runs in the same reasoning mode as the subsequent measurement run, 
+    since enabling or disabling Thinking can affect which parts of the model graph 
+    or KV cache template are initialized during the first load.
+    """
+    print(f"  Warming up {model} (think={think})...", end="", flush=True)
+    payload = {"model": model, "prompt": "hello", "stream": False}
+    if think is not None:
+        payload["think"] = think
     try:
-        requests.post(
-            f"{OLLAMA_URL}/api/generate",
-            json={"model": model, "prompt": "hello", "stream": False},
-            timeout=120
-        )
+        requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=120)
     except Exception:
         pass
     print(" done.")
@@ -317,15 +360,39 @@ def ollama_unload_all() -> None:
         print(f" WARN: could not unload all models ({e})")
 
 
-def ollama_generate(model: str, prompt: str, timeout: int = 180) -> dict:
-    """Send a single prompt, return parsed JSON response."""
-    r = requests.post(
-        f"{OLLAMA_URL}/api/generate",
-        json={"model": model, "prompt": prompt, "stream": False},
-        timeout=timeout
-    )
+def ollama_generate(
+    model: str,
+    prompt: str,
+    think: bool | None = None,
+    toggle_method: str | None = None,
+    timeout: int = 180,
+) -> dict:
+    """Send a single prompt, return parsed JSON response.
+
+    think=None            -> no reasoning control applied (legacy behaviour,
+                              non reasoning-capable models).
+    think=True/False with
+      toggle_method="api_param"     -> sets the Ollama "think" request field.
+      toggle_method="prompt_suffix" -> appends a "/no_think" style suffix to
+                                        the prompt instead, for models/Ollama
+                                        builds that ignore the "think" field.
+    """
+    effective_prompt = prompt
+    payload = {"model": model, "prompt": effective_prompt, "stream": False}
+
+    if think is not None:
+        if toggle_method == "prompt_suffix":
+            if think is False:
+                effective_prompt = f"{prompt} /no_think"
+            payload["prompt"] = effective_prompt
+        else:  # default: api_param
+            payload["think"] = think
+
+    r = requests.post(f"{OLLAMA_URL}/api/generate", json=payload, timeout=timeout)
     r.raise_for_status()
-    return r.json()
+    data = r.json()
+    data["_effective_prompt"] = effective_prompt
+    return data
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -338,12 +405,22 @@ PROMPT_CSV_HEADER = [
     "tokens_per_sec", "prompt_tokens", "prompt_tokens_per_sec", "gen_tokens",
     "gpu_mean_w", "gpu_peak_w", "gpu_energy_j",
     "cpu_mean_pct",
-    "total_tokens", "j_per_token", "j_per_out_token"
+    "total_tokens", "j_per_token", "j_per_out_token",
+    # ── Reasoning-control extension ──────────────────────────────────────
+    "reasoning_mode",           # "on" | "off" | "n/a"
+    "reasoning_toggle_method",  # "api_param" | "prompt_suffix" | ""
+    "thinking_tokens_est",      # estimated tokens spent on <think> content
+    "answer_tokens_est",        # estimated tokens spent on the final answer
+    "energy_thinking_j",        # energy_j apportioned to thinking_tokens_est
+    "energy_answer_j",          # energy_j apportioned to answer_tokens_est
+    "j_per_answer_token",       # energy_answer_j / answer_tokens_est
+    "correct",                  # "" if no gold answer available, else True/False
 ]
 
 TIMESERIES_CSV_HEADER = [
     "t_mono", "wall_ts", "model", "phase",
-    "gpu_w", "gpu_temp_c", "cpu_temp_c", "cpu_pct"
+    "gpu_w", "gpu_temp_c", "cpu_temp_c", "cpu_pct",
+    "reasoning_mode",  # "on" | "off" | "n/a" - added by reasoning-control extension
 ]
 
 
@@ -351,6 +428,88 @@ def _cpu_pct() -> float:
     if HAS_PSUTIL:
         return psutil.cpu_percent(interval=None)
     return 0.0
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Reasoning-mode helpers: thinking/answer token split + correctness scoring
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_WORD_RE = __import__("re").compile(r"\S+")
+
+
+def _approx_token_count(text: str) -> int:
+    """Whitespace/punctuation-run based token-count *approximation*.
+
+    We deliberately avoid pulling in a model-specific tokenizer (each family
+    here uses a different one, and several are gated on HuggingFace). This
+    heuristic is only used to *split* Ollama's authoritative eval_count
+    proportionally between the thinking and answer segments - it is not used
+    as an absolute token count anywhere. Document this as a limitation.
+    """
+    if not text:
+        return 0
+    return len(_WORD_RE.findall(text))
+
+
+def split_thinking_answer_tokens(thinking_text: str, answer_text: str, eval_count: int) -> tuple[int, int]:
+    """Apportions Ollama's authoritative eval_count between thinking and
+    answer segments, proportional to each segment's approximate token share.
+
+    Returns (thinking_tokens_est, answer_tokens_est) that sum to eval_count.
+    """
+    if eval_count <= 0:
+        return 0, 0
+    if not thinking_text:
+        return 0, eval_count
+
+    t_approx = _approx_token_count(thinking_text)
+    a_approx = _approx_token_count(answer_text)
+    total_approx = t_approx + a_approx
+    if total_approx == 0:
+        return 0, eval_count
+
+    thinking_tokens = round(eval_count * (t_approx / total_approx))
+    answer_tokens = eval_count - thinking_tokens
+    return thinking_tokens, answer_tokens
+
+
+def apportion_energy(energy_j: float, thinking_tokens: int, answer_tokens: int) -> tuple[float, float]:
+    """Splits total measured GPU energy across thinking/answer tokens,
+    assuming near-constant per-token decode power (justified by this
+    benchmark's own peak-power clustering, cf. Section IV.A of the base
+    paper). Returns (energy_thinking_j, energy_answer_j)."""
+    total_tokens = thinking_tokens + answer_tokens
+    if total_tokens <= 0:
+        return 0.0, energy_j
+    energy_thinking = energy_j * (thinking_tokens / total_tokens)
+    energy_answer = energy_j - energy_thinking
+    return energy_thinking, energy_answer
+
+
+def load_gold_answers(path: Path) -> dict:
+    """Loads an optional {prompt_text: gold_answer} map for correctness
+    scoring on reasoning-tier prompts. CSV with columns: prompt,gold_answer."""
+    if not path.exists():
+        return {}
+    import csv as _csv
+    gold = {}
+    with open(path, encoding="utf-8") as f:
+        for row in _csv.DictReader(f):
+            gold[row["prompt"].strip()] = row["gold_answer"].strip()
+    return gold
+
+
+def check_correct(answer_text: str, gold_answer: str) -> bool | None:
+    """Extracts the last numeric token in the answer and compares to gold.
+    Returns None if no gold answer was provided (i.e. not a scored prompt)."""
+    if gold_answer is None or gold_answer == "":
+        return None
+    matches = __import__("re").findall(r"-?\d+(?:\.\d+)?", answer_text.replace(",", ""))
+    if not matches:
+        return False
+    try:
+        return abs(float(matches[-1]) - float(gold_answer)) < 1e-6
+    except ValueError:
+        return False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -367,15 +526,21 @@ def run_model(
     prompt_csv: csv.DictWriter,
     ts_csv: csv.DictWriter,
     ts_file,
+    reasoning_mode: str = "n/a",      # "on" | "off" | "n/a"
+    toggle_method: str | None = None,  # "api_param" | "prompt_suffix" | None
+    gold_answers: dict | None = None,
 ) -> None:
+
+    gold_answers = gold_answers or {}
+    think = {"on": True, "off": False, "n/a": None}[reasoning_mode]
 
     t0_wall = datetime.now(timezone.utc).isoformat()
     print(f"\n{'═'*60}")
-    print(f"  Model: {model}")
+    print(f"  Model: {model}   [reasoning_mode={reasoning_mode}]")
     print(f"{'═'*60}")
 
     ollama_pull(model)
-    ollama_warmup(model)
+    ollama_warmup(model, think=think)
 
     if warmup_secs > 0:
         print(f"  Extra warmup sleep {warmup_secs}s...")
@@ -406,6 +571,7 @@ def run_model(
             "gpu_temp_c": f"{gt:.1f}" if not isinstance(gt, float) or not __import__('math').isnan(gt) else "",
             "cpu_temp_c": f"{ct:.1f}" if not isinstance(ct, float) or not __import__('math').isnan(ct) else "",
             "cpu_pct": "",
+            "reasoning_mode": reasoning_mode,
         })
     ts_file.flush()
 
@@ -430,6 +596,14 @@ def run_model(
         "total_tokens": 0,
         "j_per_token": 0,
         "j_per_out_token": 0,
+        "reasoning_mode": reasoning_mode,
+        "reasoning_toggle_method": toggle_method or "",
+        "thinking_tokens_est": 0,
+        "answer_tokens_est": 0,
+        "energy_thinking_j": 0,
+        "energy_answer_j": 0,
+        "j_per_answer_token": 0,
+        "correct": "",
     })
     print(f" idle GPU: {idle_mean_w:.1f} W")
 
@@ -447,7 +621,7 @@ def run_model(
             t_start = time.monotonic()
 
             try:
-                resp = ollama_generate(model, prompt)
+                resp = ollama_generate(model, prompt, think=think, toggle_method=toggle_method)
             except Exception as e:
                 poller.stop()
                 print(f" FAILED ({e})")
@@ -483,12 +657,28 @@ def run_model(
                     "gpu_temp_c": f"{gt:.1f}" if not isinstance(gt, float) or not __import__('math').isnan(gt) else "",
                     "cpu_temp_c": f"{ct:.1f}" if not isinstance(ct, float) or not __import__('math').isnan(ct) else "",
                     "cpu_pct": "",
+                    "reasoning_mode": reasoning_mode,
                 })
             ts_file.flush()
 
             total_tokens = p_tok + g_tok
             j_per_token = energy_j / total_tokens if total_tokens > 0 else 0.0
             j_per_out_token = energy_j / g_tok if g_tok > 0 else 0.0
+
+            # ── Reasoning-mode bookkeeping ───────────────────────────────
+            thinking_text = resp.get("thinking", "") or ""
+            answer_text = resp.get("response", "") or ""
+            thinking_tokens_est, answer_tokens_est = split_thinking_answer_tokens(
+                thinking_text, answer_text, g_tok
+            )
+            energy_thinking_j, energy_answer_j = apportion_energy(
+                energy_j, thinking_tokens_est, answer_tokens_est
+            )
+            j_per_answer_token = (
+                energy_answer_j / answer_tokens_est if answer_tokens_est > 0 else 0.0
+            )
+            gold = gold_answers.get(prompt.strip())
+            correct = check_correct(answer_text, gold) if gold is not None else None
 
             prompt_csv.writerow({
                 "run_id": run,
@@ -510,9 +700,18 @@ def run_model(
                 "total_tokens" : total_tokens,
                 "j_per_token" : j_per_token,
                 "j_per_out_token" : j_per_out_token,
+                "reasoning_mode": reasoning_mode,
+                "reasoning_toggle_method": toggle_method or "",
+                "thinking_tokens_est": thinking_tokens_est,
+                "answer_tokens_est": answer_tokens_est,
+                "energy_thinking_j": f"{energy_thinking_j:.3f}",
+                "energy_answer_j": f"{energy_answer_j:.3f}",
+                "j_per_answer_token": f"{j_per_answer_token:.4f}",
+                "correct": "" if correct is None else correct,
             })
 
-            print(f" {duration_ms}ms | {tps:.0f} tok/s | {mean_w:.1f} W (peak {peak_w:.1f} W) | {energy_j:.1f} J")
+            think_note = f" | think:{thinking_tokens_est}tok" if thinking_tokens_est else ""
+            print(f" {duration_ms}ms | {tps:.0f} tok/s | {mean_w:.1f} W (peak {peak_w:.1f} W) | {energy_j:.1f} J{think_note}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -538,6 +737,18 @@ def parse_args():
                    help="Don't pass --gpus all to Docker (CPU-only mode)")
     p.add_argument("--out-dir", default=f"{RESULTS_DIR}",
                    help="Directory for CSV output files")
+    p.add_argument("--reasoning-modes", nargs="+", default=["on", "off"],
+                   choices=["on", "off"],
+                   help="Which reasoning modes to run for reasoning_capable "
+                        "models (per models_config.json). Non-capable models "
+                        "always run once, with reasoning_mode='n/a'.")
+    p.add_argument("--models-config", default=str(MODELS_CONFIG_PATH),
+                   help="Path to the JSON file describing which models are "
+                        "reasoning_capable and how to toggle thinking.")
+    p.add_argument("--gold-answers", default="reasoning_prompts.csv",
+                   help="Optional CSV (prompt,gold_answer) for correctness "
+                        "scoring on reasoning-tier prompts. Ignored if the "
+                        "file does not exist.")
     return p.parse_args()
 
 
@@ -569,6 +780,11 @@ def main():
     print(f"Models: {args.models}")
     print(f"Runs per model: {args.runs}")
 
+    models_config = load_models_config(Path(args.models_config))
+    gold_answers = load_gold_answers(Path(args.gold_answers))
+    if gold_answers:
+        print(f"Loaded {len(gold_answers)} gold answers from {args.gold_answers}")
+
     # Check nvidia-smi
     poller = GpuPoller()
     if not poller.available:
@@ -597,10 +813,26 @@ def main():
             ts_csv = csv.DictWriter(tf, fieldnames=TIMESERIES_CSV_HEADER)
             ts_csv.writeheader()
 
-            # Wir holen uns die Gesamtzahl der Modelle
-            total_models = len(args.models)
+            # ── Expand (model) into (model, reasoning_mode) jobs ─────────
+            # Reasoning-capable models get one job per requested mode;
+            # non-capable models get exactly one job, mode="n/a", so they
+            # are never silently duplicated in the results.
+            jobs: list[tuple[str, str, str | None]] = []
+            for model in args.models:
+                meta = model_reasoning_meta(model, models_config)
+                if meta.get("reasoning_capable"):
+                    toggle = meta.get("reasoning_toggle", "api_param")
+                    for mode in args.reasoning_modes:
+                        jobs.append((model, mode, toggle))
+                else:
+                    jobs.append((model, "n/a", None))
 
-            for index, model in enumerate(args.models):
+            total_jobs = len(jobs)
+            print(f"Expanded to {total_jobs} model/reasoning-mode job(s):")
+            for m, mo, tg in jobs:
+                print(f"  - {m}  [reasoning_mode={mo}, toggle={tg}]")
+
+            for index, (model, mode, toggle) in enumerate(jobs):
                 try:
                     run_model(
                         model=model,
@@ -612,19 +844,22 @@ def main():
                         prompt_csv=prompt_csv,
                         ts_csv=ts_csv,
                         ts_file=tf,
+                        reasoning_mode=mode,
+                        toggle_method=toggle,
+                        gold_answers=gold_answers,
                     )
 
                     # ── Nach allen Runs: Modell entladen
                     ollama_unload(model)
 
                     # Cooldown nur, wenn es NICHT das letzte Modell ist
-                    if index < total_models - 1:
+                    if index < total_jobs - 1:
                         print("  Cooling down 15s...")
                         time.sleep(15)
 
                 except Exception as e:
                     print(f"  ERROR: {e}")
-                    print(f"  Model {model} skipped!")
+                    print(f"  Model {model} [{mode}] skipped!")
 
     finally:
         if not args.no_docker:

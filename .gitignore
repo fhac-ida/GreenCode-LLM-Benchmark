@@ -1,4 +1,5 @@
 /results/
 /plots/
 /.venv/
+/.idea/__pycache__/
 /.idea/

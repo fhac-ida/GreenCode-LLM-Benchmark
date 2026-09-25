@@ -35,6 +35,14 @@ MODEL_COLORS = [
 IDLE_COLOR  = "#90CAF9"
 GRID_ALPHA  = 0.35
 
+def lighten(color: str, amount: float = 0.45):
+    """Blends a color towards white. Used so that the 'off' bar of a
+    reasoning on/off pair uses a lighter tint of the same base color as
+    the 'on' bar - visually pairing them while keeping them distinct."""
+    import matplotlib.colors as mcolors
+    r, g, b = mcolors.to_rgb(color)
+    return (r + (1 - r) * amount, g + (1 - g) * amount, b + (1 - b) * amount)
+
 plt.rcParams.update({
     "figure.dpi": 150,
     "font.family": "sans-serif",
@@ -61,6 +69,11 @@ def load_prompts(path: Path) -> pd.DataFrame:
     for col in ["duration_ms", "tokens_per_sec", "prompt_tokens", "gen_tokens",
                 "gpu_mean_w", "gpu_peak_w", "gpu_energy_j"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+    # reasoning-control extension: older CSVs (Paper 1) won't have this column -
+    # default to "n/a" so all downstream logic treats them exactly as before.
+    if "reasoning_mode" not in df.columns:
+        df["reasoning_mode"] = "n/a"
+    df["reasoning_mode"] = df["reasoning_mode"].fillna("n/a")
     return df
 
 
@@ -70,15 +83,50 @@ def load_timeseries(path: Path) -> pd.DataFrame:
     df["t_mono"] = pd.to_numeric(df["t_mono"], errors="coerce")
     df["gpu_temp_c"] = pd.to_numeric(df.get("gpu_temp_c", 0), errors="coerce")
     df["cpu_temp_c"] = pd.to_numeric(df.get("cpu_temp_c", 0), errors="coerce")
+    # reasoning-control extension: same backward-compat fallback as load_prompts()
+    if "reasoning_mode" not in df.columns:
+        df["reasoning_mode"] = "n/a"
+    df["reasoning_mode"] = df["reasoning_mode"].fillna("n/a")
     return df
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Reasoning-mode variant expansion
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def build_model_variants(df_p: pd.DataFrame) -> list[dict]:
+    """Expands each model into one or two plottable 'variants'.
+
+    - Model has both reasoning_mode='on' and 'off' rows -> two variants,
+      labelled '<model> (on)' / '<model> (off)', so every existing plot
+      (comparison bar, rankings, summary table, timeline) shows the
+      reasoning-overhead effect directly alongside all other models.
+    - Otherwise (mode is always 'n/a', or the toggle never produced an
+      'on' row, e.g. a model that doesn't support thinking) -> exactly
+      one variant, labelled with the bare model name, filtered to
+      whatever rows exist. This reproduces the pre-extension behaviour
+      1:1 for Paper-1-style CSVs and for non-reasoning-capable models.
+
+    Returns a list of dicts: {label, model, mode} where mode is None
+    (no filtering beyond model name) or "on"/"off".
+    """
+    variants = []
+    for model, modes in df_p.groupby("model")["reasoning_mode"].apply(set).items():
+        if {"on", "off"} <= modes:
+            variants.append({"label": f"{model} (off)", "model": model, "mode": "off"})
+            variants.append({"label": f"{model} (on)",  "model": model, "mode": "on"})
+        else:
+            variants.append({"label": model, "model": model, "mode": None})
+    return variants
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Per-model stats
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def model_stats(df_p: pd.DataFrame, model: str) -> dict:
+def model_stats(df_p: pd.DataFrame, model: str, mode: str | None = None) -> dict:
     m = df_p[df_p["model"] == model]
+    if mode is not None:
+        m = m[m["reasoning_mode"] == mode]
     idle = m[m["phase"] == "idle"]
     load = m[m["phase"] == "load"]
 
@@ -109,12 +157,17 @@ def model_stats(df_p: pd.DataFrame, model: str) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def plot_timeline(df_ts: pd.DataFrame, df_p: pd.DataFrame,
-                  model: str, color: str, stamp: str) -> None:
+                  model: str, color: str, stamp: str,
+                  mode: str | None = None, label: str | None = None) -> None:
     """
-    Averaged power-over-time curve for one model.
+    Averaged power-over-time curve for one model (optionally one
+    reasoning_mode variant of that model).
     Strategy: re-index all runs onto a common relative time axis, then average.
     """
+    label = label or model
     m_ts = df_ts[df_ts["model"] == model].copy()
+    if mode is not None:
+        m_ts = m_ts[m_ts["reasoning_mode"] == mode]
     m_p = df_p[df_p["model"] == model].copy()
 
     idle_ts = m_ts[m_ts["phase"] == "idle"]
@@ -194,25 +247,25 @@ def plot_timeline(df_ts: pd.DataFrame, df_p: pd.DataFrame,
     ax.set_xlabel("Time (seconds, relative to first prompt)")
     ax.set_ylabel("GPU Power Draw (W)")
     ax.set_ylim(bottom=0)
-    model_safe = model.replace(":", "_")
+    label_safe = label.replace(":", "_").replace(" ", "_").replace("(", "").replace(")", "")
     n_runs = len(stacked)
     ax.set_title(
-        f"GPU Power Timeline — {model}  ({n_runs} run{'s' if n_runs != 1 else ''} averaged)\n"
+        f"GPU Power Timeline — {label}  ({n_runs} run{'s' if n_runs != 1 else ''} averaged)\n"
         f"Idle: {idle_mean:.1f} W  │  Load avg: {load_mean_w:.1f} W  │  Δ = {delta:+.1f} W"
     )
     ax.legend(loc="upper right", fontsize=9)
     plt.tight_layout()
 
     # Save PNG and PDF
-    out_png = PLOTS_DIR / f"{stamp}/timeline_{model_safe}.png"
-    out_pdf = PLOTS_DIR / f"{stamp}/timeline_{model_safe}.pdf"
+    out_png = PLOTS_DIR / f"{stamp}/timeline_{label_safe}.png"
+    out_pdf = PLOTS_DIR / f"{stamp}/timeline_{label_safe}.pdf"
     fig.savefig(out_png, bbox_inches="tight")
     fig.savefig(out_pdf, bbox_inches="tight")  # PDF speichern
     plt.close(fig)
     print(f"  Saved {out_png} and .pdf")
 
 
-def plot_temperatures(df_ts: pd.DataFrame, models: list[str], colors: list[str], stamp: str) -> None:
+def plot_temperatures(df_ts: pd.DataFrame, variants: list[str], colors: list[str], stamp: str) -> None:
     """
     Dual-panel temperature plot for all models combined.
     Top: GPU temperature, Bottom: CPU temperature.
@@ -241,9 +294,14 @@ def plot_temperatures(df_ts: pd.DataFrame, models: list[str], colors: list[str],
 
         ax = axes[panel][0]
 
-        for i, model in enumerate(models):
-            m_ts = df_ts[df_ts["model"] == model].copy()
+        for i, v in enumerate(variants):
+            m_ts = df_ts[df_ts["model"] == v["model"]].copy()
+            if v["mode"] is not None:
+                m_ts = m_ts[m_ts["reasoning_mode"] == v["mode"]]
             if m_ts.empty:
+                print(f"    (no timeseries data tagged reasoning_mode={v['mode']!r} "
+                      f"for {v['model']} - skipping {v['label']} in temperature plot; "
+                      f"re-run this model with the current benchmark.py to fix)")
                 continue
 
             # Normalize time to 0
@@ -262,17 +320,21 @@ def plot_temperatures(df_ts: pd.DataFrame, models: list[str], colors: list[str],
                 .mean()
             )
 
+            color = colors[i % len(colors)]
+            linestyle = "--" if v["mode"] == "on" else "-"
+
             ax.plot(
                 m_ts.loc[valid, "t_rel"],
                 temps_smoothed,
-                color=colors[i % len(colors)],
+                color=color,
                 linewidth=1.4,
                 alpha=0.85,
-                label=model,
+                linestyle=linestyle,
+                label=v["label"],
             )
 
             ax.plot(m_ts.loc[valid, "t_rel"], temps[valid],
-                    color=colors[i % len(colors)], alpha=0.12, linewidth=0.7)
+                    color=color, alpha=0.12, linewidth=0.7, linestyle=linestyle)
 
             # Shade load phases
             load_mask = ~m_ts["phase"].isin(["idle"])
@@ -281,7 +343,7 @@ def plot_temperatures(df_ts: pd.DataFrame, models: list[str], colors: list[str],
                 if not load_times.empty:
                     ax.axvspan(
                         load_times.min(), load_times.max(),
-                        alpha=0.07, color=colors[i % len(colors)],
+                        alpha=0.07, color=color,
                     )
 
         ax.set_xlabel("Time (seconds, relative)")
@@ -531,32 +593,53 @@ def main():
         print(f"GPU    : {gpu_names}")
         print(f"RAM    : {si.get('ram_total_gb', 'n/a')} GB\n")
 
-    models = [m for m in df_p["model"].unique() if pd.notna(m)]
-    if not models:
+    real_models = [m for m in df_p["model"].unique() if pd.notna(m)]
+    if not real_models:
         print("No model data found.")
         sys.exit(1)
-    print(f"Models: {models}\n")
+
+    # ── Reasoning-control extension: expand into on/off variants where
+    # applicable. For CSVs without reasoning-mode data (Paper 1 runs, or
+    # models that were never reasoning_capable) this is a 1:1 passthrough
+    # of the previous behaviour - one label per model, no filtering. ──────
+    variants = build_model_variants(df_p)
+    labels = [v["label"] for v in variants]
+    print(f"Models: {real_models}")
+    n_split = sum(1 for v in variants if v["mode"] is not None)
+    if n_split:
+        print(f"  -> {n_split} of these are shown as on/off reasoning-mode pairs\n")
+    else:
+        print()
+
+    # Assign each REAL model a base colour; "off" variants get a lightened
+    # tint of the same colour so paired bars are visually grouped.
+    base_color_map: dict[str, str] = {}
+    for i, m in enumerate(real_models):
+        base_color_map[m] = MODEL_COLORS[i % len(MODEL_COLORS)]
+
+    colors = []
+    for v in variants:
+        base = base_color_map[v["model"]]
+        colors.append(lighten(base) if v["mode"] == "off" else base)
 
     stats_map: dict[str, dict] = {}
-    for i, model in enumerate(models):
-        color = MODEL_COLORS[i % len(MODEL_COLORS)]
-        stats_map[model] = model_stats(df_p, model)
-        print(f"── Timeline: {model}")
-        plot_timeline(df_ts, df_p, model, color, args.stamp)
-
-    colors = [MODEL_COLORS[i % len(MODEL_COLORS)] for i in range(len(models))]
+    for v, color in zip(variants, colors):
+        stats_map[v["label"]] = model_stats(df_p, v["model"], v["mode"])
+        print(f"── Timeline: {v['label']}")
+        plot_timeline(df_ts, df_p, v["model"], color, args.stamp,
+                      mode=v["mode"], label=v["label"])
 
     print("\n── Comparison chart")
-    plot_comparison(models, stats_map, colors, args.stamp)
+    plot_comparison(labels, stats_map, colors, args.stamp)
 
     print("\n── Temperature plot")
-    plot_temperatures(df_ts, models, colors, args.stamp)
-
+    plot_temperatures(df_ts, variants, colors, args.stamp)
+    
     print("\n── Summary")
-    save_summary(models, stats_map, args.stamp)
+    save_summary(labels, stats_map, args.stamp)
 
     print("\n── Rankings")
-    plot_rankings(models, stats_map, colors, args.stamp)
+    plot_rankings(labels, stats_map, colors, args.stamp)
 
     print(f"\nAll plots in: {PLOTS_DIR}/")
 

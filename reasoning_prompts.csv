@@ -1,0 +1,16 @@
+prompt,gold_answer,tier
+"A train travels 60 km in the first hour and 90 km in the second hour. What is its average speed in km/h over the two hours? Give only the final number.",75,4
+"A shop had 120 apples. It sold 45% of them in the morning and 30 more in the afternoon. How many apples are left? Give only the final number.",36,4
+"Sarah has 3 times as many marbles as Tom. Together they have 48 marbles. How many marbles does Tom have? Give only the final number.",12,4
+"A rectangular garden is 12 meters long and 8 meters wide. A path 1 meter wide runs around the inside edge of the garden. What is the area in square meters of the garden excluding the path? Give only the final number.",60,4
+"If a recipe needs 250 grams of flour for 5 servings, how many grams are needed for 12 servings? Give only the final number.",600,4
+"A tank is filled by pipe A in 6 hours and by pipe B in 3 hours. If both pipes run together, how many hours does it take to fill the tank? Give the answer rounded to one decimal place.",2.0,4
+"There are 15 people at a party. Each person shakes hands exactly once with every other person. How many handshakes occur in total? Give only the final number.",105,4
+"A car depreciates by 20% of its value each year. If it is worth 20000 now, what will it be worth after 2 years, rounded to the nearest whole number? Give only the final number.",12800,4
+"Two numbers have a sum of 42 and a difference of 8. What is the larger number? Give only the final number.",25,4
+"A store increases the price of an item by 25% and then offers a 20% discount on the new price. If the original price was 80, what is the final price? Give only the final number.",80,4
+"A cyclist rides at 18 km/h for 40 minutes. How many kilometers does she travel? Give only the final number.",12,4
+"In a class of 30 students, 18 study French and 12 study Spanish, with 5 studying both. How many students study neither language? Give only the final number.",5,4
+"A ladder 10 meters long leans against a wall with its foot 6 meters from the wall's base. How many meters up the wall does the ladder reach? Give only the final number.",8,4
+"A jar contains red and blue marbles in a ratio of 3:5. If there are 24 red marbles, how many blue marbles are there? Give only the final number.",40,4
+"A worker is paid 15 per hour for the first 8 hours and 22.5 per hour for each additional hour. How much is earned for a 10-hour day? Give only the final number.",165,4

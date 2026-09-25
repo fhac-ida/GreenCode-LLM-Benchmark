@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-08-28T09:49:32.132405+00:00",
+  "os": {
+    "system": "Linux",
+    "release": "6.6.87.2-microsoft-standard-WSL2",
+    "version": "#1 SMP PREEMPT_DYNAMIC Thu Jun  5 18:30:46 UTC 2025",
+    "machine": "x86_64",
+    "node": "DESKTOP-PZ"
+  },
+  "cpu": {
+    "brand": "x86_64",
+    "physical_cores": 10,
+    "logical_cores": 20,
+    "max_freq_mhz": 0.0
+  },
+  "ram_total_gb": 15.49,
+  "gpu": [
+    {
+      "name": "NVIDIA GeForce RTX 4060 Ti",
+      "driver_version": "591.86",
+      "vram_mb": "16380 MiB",
+      "compute_cap": "8.9"
+    }
+  ]
+}

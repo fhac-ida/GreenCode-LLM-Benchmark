@@ -1,0 +1,89 @@
+{
+  "gemma3:1b": {
+    "reasoning_capable": false
+  },
+  "gemma3:4b": {
+    "reasoning_capable": false
+  },
+  "llama3.2:1b": {
+    "reasoning_capable": false
+  },
+  "llama3.2:3b": {
+    "reasoning_capable": false
+  },
+  "mistral:7b": {
+    "reasoning_capable": false
+  },
+  "qwen2.5:0.5b": {
+    "reasoning_capable": false
+  },
+  "qwen2.5:1.5b": {
+    "reasoning_capable": false
+  },
+  "qwen2.5:3b": {
+    "reasoning_capable": false
+  },
+  "qwen2.5:7b": {
+    "reasoning_capable": false
+  },
+  "qwen2.5-coder:0.5b": {
+    "reasoning_capable": false
+  },
+  "qwen2.5-coder:1.5b": {
+    "reasoning_capable": false
+  },
+  "qwen2.5-coder:3b": {
+    "reasoning_capable": false
+  },
+  "qwen2.5-coder:7b": {
+    "reasoning_capable": false
+  },
+  "qwen3.5:0.8b": {
+    "reasoning_capable": true,
+    "reasoning_toggle": "api_param"
+  },
+  "qwen3.5:2b": {
+    "reasoning_capable": true,
+    "reasoning_toggle": "api_param"
+  },
+  "qwen3.5:4b": {
+    "reasoning_capable": true,
+    "reasoning_toggle": "api_param"
+  },
+  "gemma4:e2b": {
+    "reasoning_capable": true,
+    "reasoning_toggle": "api_param"
+  },
+  "gemma2:2b": {
+    "reasoning_capable": false
+  },
+  "phi4-mini:3.8b": {
+    "reasoning_capable": false
+  },
+  "phi3:mini": {
+    "reasoning_capable": false
+  },
+  "deepseek-r1:1.5b": {
+    "reasoning_capable": true,
+    "reasoning_toggle": "thinking_tags"
+  },
+  "deepseek-r1:7b": {
+    "reasoning_capable": true,
+    "reasoning_toggle": "thinking_tags"
+  },
+  "smollm2:135m": {
+    "reasoning_capable": false
+  },
+  "smollm2:360m": {
+    "reasoning_capable": false
+  },
+  "smollm2:1.7b": {
+    "reasoning_capable": false
+  },
+  "granite3.1-dense:2b": {
+    "reasoning_capable": false
+  },
+  "tinyllama:1.1b": {
+    "reasoning_capable": false
+  }
+}
