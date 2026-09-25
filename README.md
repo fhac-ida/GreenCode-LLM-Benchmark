@@ -231,7 +231,7 @@ Additional columns added by the reasoning-control extension:
 - For models with both reasoning modes recorded, this becomes two separate
   files (`timeline_<model>_on.png` / `timeline_<model>_off.png`) rather than
   one averaged curve mixing both modes together.
-![timeline chart](example/plots/20260526_120833/timeline_gemma3_4b.png)
+![timeline chart](example/plots/timeline_gemma3_4b.png)
 
 ### `comparison_bar.png`
 - **Top**: idle (light blue) / mean load / peak load per model in watts
@@ -240,7 +240,7 @@ Additional columns added by the reasoning-control extension:
   `qwen3.5:2b (off)` / `qwen3.5:2b (on)` - both use the same base colour,
   with the "off" bar in a lighter tint, so paired bars are easy to spot at
   a glance without needing to read the x-axis labels closely.
-![comparison chart](example/plots/20260526_120833/comparison_bar.png)
+![comparison chart](example/plots/comparison_bar.png)
 
 ### `temperatures.png`
 - **Top**: GPU temperature over the entire run duration per model
@@ -252,7 +252,7 @@ Additional columns added by the reasoning-control extension:
   reasoning-control extension (no `reasoning_mode` column), that variant is
   skipped with a console note rather than silently merging on/off samples -
   re-run the model to populate it.
-![temperatures chart](example/plots/20260526_120833/temperatures.png)
+![temperatures chart](example/plots/temperatures.png)
 
 
 ### `reasoning_overhead.png`
